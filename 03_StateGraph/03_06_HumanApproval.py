@@ -1,0 +1,240 @@
+import json
+import os
+from uuid import uuid4
+
+from dotenv import load_dotenv
+from langchain.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+from typing import TypedDict
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
+
+# --- 設定 ---
+ROOT = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(ROOT, ".env"))
+PROVIDER = os.getenv("LLM_PROVIDER") or "openai"  # openai または anthropic
+TICKET_DIR = os.path.join(ROOT, "outputs", "tickets")
+
+
+def make_llm(effort: str):
+    """LLM_PROVIDER に応じて、OpenAI または Claude のチャットモデルを作る。
+
+    effort：推論の深さ。Claude には minimal が無いため、low として扱う。
+    """
+    if PROVIDER == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError(f"{os.path.join(ROOT, '.env')} に OPENAI_API_KEY を設定してください。")
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=os.getenv("OPENAI_MODEL") or "gpt-5-nano",
+            reasoning_effort=effort,
+            use_responses_api=True,
+            timeout=60,
+            max_retries=1,
+        )
+    if PROVIDER == "anthropic":
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise RuntimeError(f"{os.path.join(ROOT, '.env')} に ANTHROPIC_API_KEY を設定してください。")
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(
+            model=os.getenv("ANTHROPIC_MODEL") or "claude-haiku-5-5",
+            reasoning_effort="low" if effort == "minimal" else effort,
+            max_tokens=16000,
+            timeout=60,
+            max_retries=1,
+        )
+    raise RuntimeError("LLM_PROVIDER は openai か anthropic を指定してください。")
+
+
+llm = make_llm("low")
+
+
+###############################################################################
+# ツール1 : 基本的な確認手順を返す。人間の承認は不要
+###############################################################################
+@tool
+def troubleshoot_issue(issue: str) -> str:
+    """問題に対する、基本的な確認手順を返す。
+
+    Args:
+        issue: 問題の内容
+    """
+    return "確認手順：1. 接続状態を確認する。2. 表示されたエラーメッセージを記録する。"
+
+
+###############################################################################
+# ツール2 : 問い合わせ票を作る。人間の承認は必要
+###############################################################################
+@tool
+def create_ticket(issue_type: str, details: str) -> str:
+    """問い合わせ票を作成し、ファイルに保存する。
+
+    Args:
+        issue_type: 問題の種類
+        details: 問題の詳しい内容
+    """
+    os.makedirs(TICKET_DIR, exist_ok=True)
+    ticket_id = f"TICKET-{uuid4().hex[:8]}"
+    with open(os.path.join(TICKET_DIR, f"{ticket_id}.json"), "w", encoding="utf-8") as file:
+        json.dump({"ticket_id": ticket_id, "issue_type": issue_type, "details": details}, file, ensure_ascii=False, indent=2)
+    return f"問い合わせ票 {ticket_id} を作成しました。"
+
+#####################################
+# 1段目：相談から、問い合わせ票の下書きを作るチェーン
+#####################################
+# LLMのレスポンス形式を定義する（問い合わせ票の下書き）
+class TicketDraft(BaseModel):
+    #  issue_type： 問題の種類
+    #  details   ： 問題の詳しい内容
+    issue_type: str = Field(description="問題の種類。例：プリンターの認証エラー")
+    details: str = Field(description="問題の詳しい内容と、試したこと")
+
+
+prompt_draft = ChatPromptTemplate.from_messages([
+    # system : アプリを作った開発者からの指示
+    ("system", "あなたは電子機器の技術サポート係です。利用者の相談から、問い合わせ票の下書きを作ってください。"),
+    # user   : アプリを使う利用者の発言
+    ("user", "{message}"),
+])
+chain_draft = prompt_draft | llm.with_structured_output(TicketDraft, method="json_schema")
+
+#####################################
+# 最後の段：利用者への返事を作るチェーン
+#####################################
+prompt_reply = ChatPromptTemplate.from_messages([
+    (
+        # system : アプリを作った開発者からの指示
+        "system",
+        "あなたは電子機器の技術サポート係です。結果に基づいて、利用者への返事を日本語で簡潔に作ってください。"
+        "作成が却下された場合は、作成しなかったことを伝えてください。"
+    ),(
+        # user   : 相談と、問い合わせ票の結果
+        "user",
+        "【相談】\n{message}\n\n【問い合わせ票の結果】\n{ticket_result}"
+    ),
+])
+chain_reply = prompt_reply | llm | StrOutputParser()
+
+
+#####################################
+# グラフの状態を定義する
+#####################################
+class SupportState(TypedDict, total=False):
+    #  message      ： 利用者の相談
+    #  issue_type   ： 問い合わせ票の、問題の種類
+    #  details      ： 問い合わせ票の、詳しい内容
+    #  approved     ： 担当者が承認したら True
+    #  ticket_result： 問い合わせ票の結果
+    #  reply        ： 利用者への返事
+    message: str
+    issue_type: str
+    details: str
+    approved: bool
+    ticket_result: str
+    reply: str
+
+
+#####################################
+# ノード（グラフの1ステップ。状態を受け取り、更新する項目を返す）
+#####################################
+# 1段目：問い合わせ票の下書きを作る
+def node_draft(state: SupportState) -> dict:
+    draft = chain_draft.invoke({"message": state["message"]})
+    return {"issue_type": draft.issue_type, "details": draft.details}
+
+
+# 2段目：処理を止めて、担当者の判断を待つ。再開したときに渡された値（y/n）が、ここに返る
+def node_approve(state: SupportState) -> dict:
+    decision = interrupt({"issue_type": state["issue_type"], "details": state["details"]})
+    return {"approved": decision == "y"}
+
+
+# 3段目：問い合わせ票を作る（承認されたときだけ通る）
+def node_create(state: SupportState) -> dict:
+    return {"ticket_result": create_ticket.invoke({"issue_type": state["issue_type"], "details": state["details"]})}
+
+
+# 却下されたとき
+def node_reject(state: SupportState) -> dict:
+    return {"ticket_result": "担当者が作成を却下しました。"}
+
+
+# 最後の段：利用者への返事を作る
+def node_reply(state: SupportState) -> dict:
+    return {"reply": chain_reply.invoke({"message": state["message"], "ticket_result": state["ticket_result"]})}
+
+
+# 条件分岐：承認されたら作成へ、却下されたら作成しない
+def select_next(state: SupportState) -> str:
+    if state["approved"]:
+        return "create"
+    return "reject"
+
+
+#####################################
+# グラフを組み立てる
+#####################################
+#  START → draft → approve（ここで止まり、担当者の判断を待つ）─┬→ create → reply → END（承認）
+#                                                             └→ reject → reply → END（却下）
+graph = StateGraph(SupportState)
+graph.add_node("draft", node_draft)
+graph.add_node("approve", node_approve)
+graph.add_node("create", node_create)
+graph.add_node("reject", node_reject)
+graph.add_node("reply", node_reply)
+graph.add_edge(START, "draft")
+graph.add_edge("draft", "approve")
+graph.add_conditional_edges("approve", select_next, ["create", "reject"])
+graph.add_edge("create", "reply")
+graph.add_edge("reject", "reply")
+graph.add_edge("reply", END)
+# checkpointer：止めた状態を保存する（再開するときに必要）
+app = graph.compile(checkpointer=InMemorySaver())
+
+
+def main():
+    """
+    題材：AIが問い合わせ票を作る前に、処理を止めて人間の担当者に承認を求める。
+         承認されたら作成し、却下されたら作成しない。
+
+    登場人物：
+      AIアシスタント：このプログラムのワークフロー。問い合わせ票の下書きを作り、承認されたら作成する
+      田中さん      ：田中さんは、AIアシスタントへ、プリンターの不具合を相談する
+      担当者        ：人間のサポート担当者。AIアシスタントが問い合わせ票を作る前に、承認または却下する
+    """
+
+    # thread_id：止めた処理を再開するときに、どの会話かを示すID
+    config = {"configurable": {"thread_id": "support-1"}}
+
+    # ##################################################################
+    # 田中さんの相談：AIアシスタントは問い合わせ票の下書きを作り、承認を待って止まる
+    # ##################################################################
+    message = "プリンターの認証エラーが再起動しても直りません。問い合わせ票を作って記録してください。"
+    print(f"[田中さん] {message}")
+    result = app.invoke({"message": message}, config)
+
+    # __interrupt__ があれば、人間の判断を待って止まっている
+    while "__interrupt__" in result:
+        request = result["__interrupt__"][0].value
+        print(f"[承認待ち] 問題の種類：{request['issue_type']}")
+        print(f"[承認待ち] 詳しい内容：{request['details']}")
+
+        # ##################################################################
+        # 担当者の判断：承認（y）か却下（n）を入力する
+        # ##################################################################
+        answer = input("[担当者] 問い合わせ票の作成を承認しますか？（y/n）：").strip().lower()
+
+        # Command(resume=...) で、担当者の判断を渡して処理を再開する。渡した値が interrupt() の戻り値になる
+        result = app.invoke(Command(resume=answer), config)
+
+    print(f"[AIアシスタント] {result['reply']}")
+
+
+if __name__ == "__main__":
+    main()

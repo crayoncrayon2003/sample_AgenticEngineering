@@ -1,0 +1,12 @@
+# 秘密情報
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# 実行時生成ファイル
+outputs/
+
+# DeepEval の実行時に作られるフォルダ
+.deepeval/

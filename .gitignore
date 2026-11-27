@@ -1,0 +1,10 @@
+# 秘密情報
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 実行時生成ファイル
+outputs/

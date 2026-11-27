@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UserProfile",
+  "description": "文章から抽出した利用者情報の検証条件。",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "利用者の氏名。"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "利用者のメールアドレス。"
+    },
+    "date_of_birth": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "生年月日。文字列の場合はYYYY-MM-DD形式。"
+    },
+    "interests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "興味・関心のある分野の一覧。"
+    }
+  },
+  "required": ["name", "email"],
+  "additionalProperties": false
+}

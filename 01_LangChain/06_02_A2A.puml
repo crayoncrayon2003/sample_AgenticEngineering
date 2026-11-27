@@ -1,0 +1,77 @@
+@startuml
+autonumber
+
+actor "ユーザ" as User
+box "Client Agent（依頼する側のエージェント）" #F5F5F5
+  participant "Client Agent\n(アプリ本体)" as Host
+  participant "A2A Client" as Client
+end box
+box "Remote Agent（依頼される側のエージェント）" #F5F5F5
+  participant "A2A Server" as Server
+  participant "Agent Executor\n(LLM等で処理)" as Executor
+end box
+
+== 1. エージェントの発見 ==
+activate Host
+Host -> Client ++ : 接続先のエージェントを調べる
+Client -> Server ++ : GET /.well-known/agent-card.json
+Server --> Client -- : Agent Card\n(name, url, skills, capabilities)
+Client --> Host -- : 能力・スキル
+
+== 2. タスク実行（同期：message/send） ==
+User -> Host : 依頼
+Host -> Client ++ : 依頼を送る
+Client -> Server ++ : message/send\n(Message)
+Server -> Executor ++ : execute(context)
+Executor --> Server -- : 実行結果 (Artifact)
+Server --> Client -- : Task (completed, artifacts)\nまたは Message
+Client --> Host -- : 結果
+Host --> User : 回答
+
+== 3. タスク実行（ストリーミング：message/stream） ==
+opt capabilities.streaming が true の場合
+  Host -> Client ++ : 依頼を送る
+  Client -> Server ++ : message/stream\n(Message)
+  Server -> Executor ++ : execute(context)
+  Server --> Client : SSE: Task (submitted)
+  Executor ->> Server : 状態更新 (working)
+  Server --> Client : SSE: TaskStatusUpdateEvent (working)
+  Executor ->> Server : 成果物
+  Server --> Client : SSE: TaskArtifactUpdateEvent (Artifact)
+  Executor --> Server -- : 完了
+  Server --> Client -- : SSE: TaskStatusUpdateEvent (completed, final)
+  Client --> Host -- : 結果
+end
+
+== 4. 追加入力が必要な場合（マルチターン） ==
+opt Task が input-required になった場合
+  Host -> Client ++ : 追加情報を送る
+  Client -> Server ++ : message/send\n(Message, taskId, contextId)
+  Server -> Executor ++ : execute(context)
+  Executor --> Server -- : 実行結果
+  Server --> Client -- : Task (completed)
+  Client --> Host -- : 結果
+end
+
+== 5. 長時間タスクの追跡（任意） ==
+opt ポーリングする場合
+  Client -> Server ++ : tasks/get (taskId)
+  Server --> Client -- : Task (status, artifacts)
+end
+opt capabilities.pushNotifications が true の場合
+  Client -> Server ++ : tasks/pushNotificationConfig/set\n(taskId, webhook URL)
+  Server --> Client -- : 設定結果
+  ...タスクの状態が変わったとき...
+  Server ->> Client : Webhook (HTTP POST): タスク状態の通知
+  activate Client
+  Client -> Server ++ : tasks/get (taskId)
+  Server --> Client -- : Task (status, artifacts)
+  deactivate Client
+end
+opt タスクを取り消す場合
+  Client -> Server ++ : tasks/cancel (taskId)
+  Server --> Client -- : Task (canceled)
+end
+deactivate Host
+
+@enduml

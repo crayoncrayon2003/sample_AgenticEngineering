@@ -1,0 +1,71 @@
+@startuml
+autonumber
+
+actor "ユーザ" as User
+box "Host（LLMアプリ：Claude Desktop、IDE、エージェント等）" #F5F5F5
+  participant "Host\n(アプリ本体)" as Host
+  participant "MCP Client" as Client
+end box
+participant "LLM" as LLM
+participant "MCP Server\n(Tools / Resources / Prompts)" as Server
+
+== 1. 初期化フェーズ ==
+activate Host
+Host -> Client ++ : 接続開始
+Client -> Server ++ : initialize\n(protocolVersion, capabilities, clientInfo)
+Server --> Client -- : InitializeResult\n(protocolVersion, capabilities, serverInfo)
+Client ->> Server : notifications/initialized
+Client --> Host -- : 接続完了
+
+== 2. 機能の発見 ==
+Host -> Client ++ : 利用できる機能を取得
+Client -> Server ++ : tools/list
+Server --> Client -- : ツール一覧\n(name, description, inputSchema)
+opt サーバが resources に対応している場合
+  Client -> Server ++ : resources/list
+  Server --> Client -- : リソース一覧 (uri, name, mimeType)
+end
+opt サーバが prompts に対応している場合
+  Client -> Server ++ : prompts/list
+  Server --> Client -- : プロンプト一覧 (name, arguments)
+end
+Client --> Host -- : 機能一覧
+
+== 3. ツール実行 ==
+User -> Host : 依頼
+Host -> LLM ++ : 依頼 + ツール定義
+LLM --> Host -- : ツール呼び出しの指示\n(name, arguments)
+Host -> Client ++ : ツールを実行
+Client -> Server ++ : tools/call\n(name, arguments)
+Server --> Client -- : CallToolResult\n(実行結果 / isError)
+Client --> Host -- : ツールの結果
+Host -> LLM ++ : ツールの結果
+LLM --> Host -- : 最終回答
+Host --> User : 回答
+
+== 4. サーバからの通知（任意） ==
+opt サーバが listChanged に対応している場合
+  Server ->> Client : notifications/tools/list_changed
+  activate Client
+  Client -> Server ++ : tools/list
+  Server --> Client -- : 更新後のツール一覧
+  deactivate Client
+end
+opt リソースを購読している場合
+  Client -> Server ++ : resources/subscribe (uri)
+  Server --> Client -- : 空の結果 (購読受付)
+  ...リソースが更新されたとき...
+  Server ->> Client : notifications/resources/updated (uri)
+  activate Client
+  Client -> Server ++ : resources/read (uri)
+  Server --> Client -- : リソースの内容
+  deactivate Client
+end
+
+== 5. 終了フェーズ ==
+Host -> Client ++ : 切断
+Client ->> Server : 接続を閉じる\n(stdio: 入力を閉じる / Streamable HTTP: HTTP DELETE)
+Client --> Host -- : 切断完了
+deactivate Host
+
+@enduml
