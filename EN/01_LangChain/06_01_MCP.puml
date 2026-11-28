@@ -1,0 +1,71 @@
+@startuml
+autonumber
+
+actor "User" as User
+box "Host (LLM application: Claude Desktop, IDE, agent, etc.)" #F5F5F5
+  participant "Host\n(Application)" as Host
+  participant "MCP Client" as Client
+end box
+participant "LLM" as LLM
+participant "MCP Server\n(Tools / Resources / Prompts)" as Server
+
+== 1. Initialization ==
+activate Host
+Host -> Client ++ : Start connection
+Client -> Server ++ : initialize\n(protocolVersion, capabilities, clientInfo)
+Server --> Client -- : InitializeResult\n(protocolVersion, capabilities, serverInfo)
+Client ->> Server : notifications/initialized
+Client --> Host -- : Connection established
+
+== 2. Capability discovery ==
+Host -> Client ++ : Get available capabilities
+Client -> Server ++ : tools/list
+Server --> Client -- : Tool list\n(name, description, inputSchema)
+opt If the server supports resources
+  Client -> Server ++ : resources/list
+  Server --> Client -- : Resource list (uri, name, mimeType)
+end
+opt If the server supports prompts
+  Client -> Server ++ : prompts/list
+  Server --> Client -- : Prompt list (name, arguments)
+end
+Client --> Host -- : Capabilities
+
+== 3. Tool execution ==
+User -> Host : Request
+Host -> LLM ++ : Request + tool definitions
+LLM --> Host -- : Tool call request\n(name, arguments)
+Host -> Client ++ : Execute tool
+Client -> Server ++ : tools/call\n(name, arguments)
+Server --> Client -- : CallToolResult\n(Result / isError)
+Client --> Host -- : Tool result
+Host -> LLM ++ : Tool result
+LLM --> Host -- : Final answer
+Host --> User : Answer
+
+== 4. Server notifications (optional) ==
+opt If the server supports listChanged
+  Server ->> Client : notifications/tools/list_changed
+  activate Client
+  Client -> Server ++ : tools/list
+  Server --> Client -- : Updated tool list
+  deactivate Client
+end
+opt If subscribed to resources
+  Client -> Server ++ : resources/subscribe (uri)
+  Server --> Client -- : Empty result (subscription accepted)
+  ...When a resource changes...
+  Server ->> Client : notifications/resources/updated (uri)
+  activate Client
+  Client -> Server ++ : resources/read (uri)
+  Server --> Client -- : Resource contents
+  deactivate Client
+end
+
+== 5. Shutdown ==
+Host -> Client ++ : Disconnect
+Client ->> Server : Close connection\n(stdio: Close input / Streamable HTTP: HTTP DELETE)
+Client --> Host -- : Disconnected
+deactivate Host
+
+@enduml

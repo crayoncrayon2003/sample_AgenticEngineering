@@ -1,0 +1,10 @@
+python-dotenv
+pydantic
+litellm
+psycopg[binary]
+jsonschema
+mcp
+fastapi
+uvicorn
+requests
+a2a-sdk[http-server]

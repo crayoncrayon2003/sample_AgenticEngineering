@@ -1,0 +1,11 @@
+Document: Laboratory X Safety Procedures
+Note: This is a fictional document created to test search functionality.
+
+Wear a lab coat and safety goggles when entering the laboratory.
+Experiments involving chemicals must always be performed by at least two people.
+
+The laboratory is open from 9:00 a.m. to 6:00 p.m.
+After use, turn off equipment and fill in the usage log.
+
+If you notice an equipment malfunction, stop work and contact Sato, who is responsible for safety management.
+Safety training is held on the first Monday of every month.

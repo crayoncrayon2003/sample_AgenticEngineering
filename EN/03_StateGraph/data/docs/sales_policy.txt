@@ -1,0 +1,10 @@
+Document: Aozora Trading Second-Quarter Sales Policy
+Note: This is a fictional document created to test search functionality.
+
+The second-quarter priorities are stronger support for existing customers and expansion of corporate services.
+
+The sales target is 30 million yen, with a target of 20 new contracts.
+The priority regions are Osaka Prefecture and Shiga Prefecture.
+
+Sales meetings are held every Tuesday at 10:00 a.m.
+Tanaka of the sales department is responsible for these initiatives.

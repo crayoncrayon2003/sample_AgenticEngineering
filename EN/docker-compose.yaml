@@ -1,0 +1,22 @@
+name: agent-session-sample
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: agent_sessions
+      POSTGRES_USER: agent_user
+      POSTGRES_PASSWORD: local_dev_password
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - session_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_user -d agent_sessions"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+volumes:
+  session_pgdata:

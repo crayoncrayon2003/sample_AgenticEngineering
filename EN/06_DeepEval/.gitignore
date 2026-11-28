@@ -1,0 +1,12 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime-generated files
+outputs/
+
+# Directory created when running DeepEval
+.deepeval/

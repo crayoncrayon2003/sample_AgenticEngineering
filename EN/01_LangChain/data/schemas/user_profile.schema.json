@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UserProfile",
+  "description": "Validation constraints for user information extracted from text.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "User's full name."
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "User's email address."
+    },
+    "date_of_birth": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Birth date; YYYY-MM-DD when supplied as a string."
+    },
+    "interests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of fields of interest."
+    }
+  },
+  "required": ["name", "email"],
+  "additionalProperties": false
+}

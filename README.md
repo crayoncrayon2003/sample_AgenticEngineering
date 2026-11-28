@@ -1,3 +1,7 @@
+[日本語](README.md) | [English](README.en.md)
+
+日本語版は [JP/](JP/README.md)、英語版は [EN/](EN/README.md) にあります。
+
 # 準備
 
 ```bash
@@ -37,7 +41,7 @@ SESSION_DATABASE_URL=postgresql://agent_user:local_dev_password@127.0.0.1:15432/
 
 ## Langfuse の起動
 
-`05_Langfuse` のサンプルを動かす場合は、Langfuse をローカルで起動する。キーの取得は不要。詳しくは [05_Langfuse/README.md](05_Langfuse/README.md) を参照。
+`05_Langfuse` のサンプルを動かす場合は、Langfuse をローカルで起動する。キーの取得は不要。詳しくは [JP/05_Langfuse/README.md](JP/05_Langfuse/README.md) を参照。
 
 ```bash
 docker compose -f 05_Langfuse/docker-compose.yaml up -d

@@ -1,0 +1,77 @@
+@startuml
+autonumber
+
+actor "User" as User
+box "Client Agent (requesting agent)" #F5F5F5
+  participant "Client Agent\n(Application)" as Host
+  participant "A2A Client" as Client
+end box
+box "Remote Agent (receiving agent)" #F5F5F5
+  participant "A2A Server" as Server
+  participant "Agent Executor\n(LLM or other processing)" as Executor
+end box
+
+== 1. Agent discovery ==
+activate Host
+Host -> Client ++ : Discover the remote agent
+Client -> Server ++ : GET /.well-known/agent-card.json
+Server --> Client -- : Agent Card\n(name, url, skills, capabilities)
+Client --> Host -- : Capabilities and skills
+
+== 2. Task execution (synchronous: message/send) ==
+User -> Host : Request
+Host -> Client ++ : Send request
+Client -> Server ++ : message/send\n(Message)
+Server -> Executor ++ : execute(context)
+Executor --> Server -- : Result (Artifact)
+Server --> Client -- : Task (completed, artifacts)\nor Message
+Client --> Host -- : Result
+Host --> User : Answer
+
+== 3. Task execution (streaming: message/stream) ==
+opt If capabilities.streaming is true
+  Host -> Client ++ : Send request
+  Client -> Server ++ : message/stream\n(Message)
+  Server -> Executor ++ : execute(context)
+  Server --> Client : SSE: Task (submitted)
+  Executor ->> Server : Status update (working)
+  Server --> Client : SSE: TaskStatusUpdateEvent (working)
+  Executor ->> Server : Artifact
+  Server --> Client : SSE: TaskArtifactUpdateEvent (Artifact)
+  Executor --> Server -- : Completed
+  Server --> Client -- : SSE: TaskStatusUpdateEvent (completed, final)
+  Client --> Host -- : Result
+end
+
+== 4. Additional input required (multiple turns) ==
+opt If the Task becomes input-required
+  Host -> Client ++ : Send additional information
+  Client -> Server ++ : message/send\n(Message, taskId, contextId)
+  Server -> Executor ++ : execute(context)
+  Executor --> Server -- : Execution result
+  Server --> Client -- : Task (completed)
+  Client --> Host -- : Result
+end
+
+== 5. Track long-running tasks (optional) ==
+opt When polling
+  Client -> Server ++ : tasks/get (taskId)
+  Server --> Client -- : Task (status, artifacts)
+end
+opt If capabilities.pushNotifications is true
+  Client -> Server ++ : tasks/pushNotificationConfig/set\n(taskId, webhook URL)
+  Server --> Client -- : Configuration result
+  ...When task status changes...
+  Server ->> Client : Webhook (HTTP POST): Task status notification
+  activate Client
+  Client -> Server ++ : tasks/get (taskId)
+  Server --> Client -- : Task (status, artifacts)
+  deactivate Client
+end
+opt When canceling a task
+  Client -> Server ++ : tasks/cancel (taskId)
+  Server --> Client -- : Task (canceled)
+end
+deactivate Host
+
+@enduml
